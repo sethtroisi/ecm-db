@@ -1,11 +1,5 @@
-# ecm-db
-Distributed ECM
-
----
-
-A distributed, stateful database.
-
-Also a multiprocess wrapper on gmp-ecm.
+# ECM-DB
+Distributed Stateful ECM
 
 ---
 
