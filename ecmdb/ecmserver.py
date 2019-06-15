@@ -1,3 +1,4 @@
+import contextlib
 import datetime
 import os
 import logging
@@ -46,20 +47,28 @@ class EcmServer:
             logging.warning(f"Creating db({self._db_file}) from {schema_path}")
             with open(schema_path) as schema_f:
                 schema = schema_f.read()
-                cur = self.get_cursor()
-                cur.executescript(schema)
-                cur.close()
+                with self.cursor() as cur:
+                    cur.executescript(schema)
 
-    def get_cursor(self):
+
+    def _get_cursor(self):
         # TODO: closing cursor one day.
         return self._db.cursor()
 
+
+    def cursor(self):
+        return contextlib.closing(self._get_cursor())
+
+
     def find_number(self, n):
-        cur = self.get_cursor()
-        cur.execute('SELECT * from INSERT INTO numbers VALUES (null,?,?,?)',
-            (n, status))
-        cur.close()
-        self._db.commit()
+        with self.cursor() as cur:
+            cur.execute('SELECT * from numbers where n = ?', (n,))
+            records = cur.fetchall()
+            if len(records) == 0:
+                return None
+            elif len(records) >= 2:
+                raise ValueError(f"Duplicate records for {n}")
+            return records[0]
 
 
     def add_number(self, expr):
@@ -68,16 +77,17 @@ class EcmServer:
         else:
             raise ValueError(f"Bad expr: {expr}")
 
-        # TODO: verify not already in db
+        record = self.find_number(n)
+        if record:
+            return record
 
         status = 2 if gmpy2.is_prime(n) else 5
 
-        cur = self.get_cursor()
-        cur.execute(
-            'INSERT INTO numbers VALUES (null,?,?)',
-            (n, status))
-        cur.close()
+        with self.cursor() as cur:
+            cur.execute('INSERT INTO numbers VALUES (null,?,?)', (n, status))
         self._db.commit()
+
+        return self.find_number(n)
 
     def _is_number(n):
         return isinstance(n, int) or re.match("[1-9][0-9]*", n)
