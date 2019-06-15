@@ -16,37 +16,40 @@ class EcmServer:
     SCHEMA_FILE = "schema.sql"
 
     def __init__(self, db_file="./ecm-server.db"):
-        self.db_file = db_file
-        self.db = None
+        self._db_file = db_file
+        self._db = None
 
         self.init_db()
 
 
     def init_db(self):
-        exists = os.path.isfile(self.db_file)
+        exists = os.path.isfile(self._db_file) and os.path.getsize(self._db_file) > 0
 
-        self.db = sqlite3.connect(self.db_file)
+        self._db = sqlite3.connect(self._db_file)
         # Makes returns namedtuple like
-        self.db.row_factory = sqlite3.Row
+        self._db.row_factory = sqlite3.Row
 
         # Turn on foreign_key constraints
-        self.db.execute("PRAGMA foreign_keys = 1")
+        self._db.execute("PRAGMA foreign_keys = 1")
 
         if not exists:
             schema_path = os.path.join(os.path.dirname(__file__), EcmServer.SCHEMA_FILE)
-            logging.warn(f"Creating db({self.db_file}) from {schema_path}")
+            logging.warning(f"Creating db({self._db_file}) from {schema_path}")
             with open(schema_path) as schema_f:
                 schema = schema_f.read()
-                cur = self.db.cursor()
+                cur = self.get_cursor()
                 cur.executescript(schema)
                 cur.close()
+
+    def get_cursor(self):
+        # TODO: closing cursor one day.
+        return self._db.cursor()
 
     def add_number(self, expr):
         # https://stackoverflow.com/questions/2371436/evaluating-a-mathematical-expression-in-a-string
 
         if re.match("[1-9][0-9]*", expr):
             # TODO: verify not already in db
-
             n = int(expr)
         else:
             # TODO: Implement
@@ -57,10 +60,10 @@ class EcmServer:
 
         status = 2 if gmpy2.is_prime(n) else 5
 
-        cur = self.db.cursor()
+        cur = self.get_cursor()
         cur.execute(
             'INSERT INTO numbers VALUES (1,?,?,?)',
             (n, expr, status))
         cur.close()
-        self.db.commit()
+        self._db.commit()
 

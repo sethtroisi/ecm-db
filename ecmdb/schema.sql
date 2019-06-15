@@ -1,11 +1,11 @@
 /** DB for tracking distribution ecm effort */
 
 /* TODO: delete before 1.0.0 */
-DROP TABLE IF EXISTS ecm_curve;
+DROP TABLE IF EXISTS ecm_curves;
 DROP TABLE IF EXISTS numbers;
 DROP TABLE IF EXISTS factors;
 
-CREATE TABLE IF NOT EXISTS ecm_curve (
+CREATE TABLE IF NOT EXISTS ecm_curves (
   num_id INTEGER NOT NULL,
   curve_id INTEGER NOT NULL,
 
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS numbers (
   status INTEGER NOT NULL CHECK(status >= 1 AND status <= 5)
 );
 
-CREATE TABLE IF NOT EXISTS factor (
+CREATE TABLE IF NOT EXISTS factors (
   num_id_c INTEGER NOT NULL,
   num_id_f INTEGER NOT NULL,
 
