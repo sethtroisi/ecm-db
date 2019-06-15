@@ -31,6 +31,10 @@ Also a multiprocess wrapper on gmp-ecm.
   - [ ] Maxmem manager
   - [ ] support for all options
 
+
+### Low Priority
+- [ ] Spinx docs
+
 ### Versions
 
 * **0.1.0 alpha**
