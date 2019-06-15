@@ -61,17 +61,22 @@ class EcmServer:
 
 
     def find_number(self, n):
+        """Find record for number if it's part of the database"""
+        # TODO allow lookup by numid?
         with self.cursor() as cur:
             cur.execute('SELECT * from numbers where n = ?', (n,))
             records = cur.fetchall()
-            if len(records) == 0:
-                return None
-            elif len(records) >= 2:
-                raise ValueError(f"Duplicate records for {n}")
-            return records[0]
+
+        if len(records) == 0:
+            return None
+        elif len(records) >= 2:
+            raise ValueError(f"Duplicate records for {n}")
+        return records[0]
 
 
     def add_number(self, expr):
+        """Add a number to the database"""
+
         if EcmServer._is_number(expr):
             n = int(expr)
         else:
@@ -89,8 +94,26 @@ class EcmServer:
 
         return self.find_number(n)
 
+
+    def stats(self, expr):
+        """Statistics about number, ecm progress, factors"""
+        # TODO look up parents and all that jazz.
+
+        # TODO wrapper class
+        number = self.find_number(expr)
+        if not number:
+            return []
+        num_id = number['num_id']
+
+        with self.cursor() as cur:
+            cur.execute('SELECT * from ecm_curves where num_id = ?', (num_id,))
+            records = cur.fetchall()
+        return records
+
+
     def _is_number(n):
         return isinstance(n, int) or re.match("[1-9][0-9]*", n)
+
 
     def _is_number_expr(expr):
         # TODO

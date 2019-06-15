@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS numbers (
   n      TEXT NOT NULL,
 
   /* TODO: n_expr */
+  /* TODO: parent */
 
   /**
    * P = 1, PRP = 2, FF = 3,
