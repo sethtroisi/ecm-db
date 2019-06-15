@@ -3,8 +3,10 @@ import os
 import logging
 import re
 import time
-import gmpy2
 
+from enum import Enum
+
+import gmpy2
 import sqlite3
 
 class EcmServer:
@@ -14,6 +16,13 @@ class EcmServer:
     """
 
     SCHEMA_FILE = "schema.sql"
+
+    class Status(Enum):
+        P = 1
+        PRP = 2
+        FF = 3
+        CF = 4
+        C = 5
 
     def __init__(self, db_file="./ecm-server.db"):
         self._db_file = db_file
@@ -45,25 +54,36 @@ class EcmServer:
         # TODO: closing cursor one day.
         return self._db.cursor()
 
-    def add_number(self, expr):
-        # https://stackoverflow.com/questions/2371436/evaluating-a-mathematical-expression-in-a-string
+    def find_number(self, n):
+        cur = self.get_cursor()
+        cur.execute('SELECT * from INSERT INTO numbers VALUES (null,?,?,?)',
+            (n, status))
+        cur.close()
+        self._db.commit()
 
-        if re.match("[1-9][0-9]*", expr):
-            # TODO: verify not already in db
+
+    def add_number(self, expr):
+        if EcmServer._is_number(expr):
             n = int(expr)
         else:
-            # TODO: Implement
-            short = str(expr)[:100]
-            error = f"Not yet able to eval expr({short})"
-            logging.error(error)
-            raise NotImplementedError(error)
+            raise ValueError(f"Bad expr: {expr}")
+
+        # TODO: verify not already in db
 
         status = 2 if gmpy2.is_prime(n) else 5
 
         cur = self.get_cursor()
         cur.execute(
-            'INSERT INTO numbers VALUES (1,?,?,?)',
-            (n, expr, status))
+            'INSERT INTO numbers VALUES (null,?,?)',
+            (n, status))
         cur.close()
         self._db.commit()
+
+    def _is_number(n):
+        return isinstance(n, int) or re.match("[1-9][0-9]*", n)
+
+    def _is_number_expr(expr):
+        # TODO
+        # https://stackoverflow.com/questions/2371436/evaluating-a-mathematical-expression-in-a-string
+        return False
 

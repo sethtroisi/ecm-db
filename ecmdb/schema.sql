@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS ecm_curves (
 CREATE TABLE IF NOT EXISTS numbers (
   num_id INTEGER PRIMARY KEY AUTOINCREMENT,
   n      TEXT NOT NULL,
-  n_expr TEXT NOT NULL,
+
+  /* TODO: n_expr */
+
   /**
    * P = 1, PRP = 2, FF = 3,
    * CF = 4, C = 5
