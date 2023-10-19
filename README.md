@@ -15,6 +15,7 @@ Based on pull based client model from CADO-nfs, primenet, BOINC.
 
 ### Sequence Diagram
 
+
 ```mermaid
 sequenceDiagram;
     participant F as Front End
@@ -24,20 +25,19 @@ sequenceDiagram;
 
     F->>+S: Queue Curves(N, B1, B2)
 
-    GC->>+S: get_stage_1_work
+    GC->>S: get_stage_1_work
+    S-->>GC: reserve_stage_1
     activate GC
-    S-->>-GC: reserve_stage_1
     GC->>S: upload_stage1_results
     deactivate GC
     S-->>F: progress
 
     CC->>S: reserve_stage2_work
-    activate CC
-    S-->>CC: reservation
-    CC->>S: upload_stage2_results
-    deactivate CC
+    S-->>+CC: reservation
+    CC->>-S: upload_stage2_results
+    deactivate S
 
-    S-->>-F: progress
+    S-->>F: progress
 ```
 
 ### Server
@@ -52,10 +52,13 @@ Python that tracks state
 
 API:
 
+* `queue_work(n, B1, B2, ...)`
 * `get_stage1_work`
-* `upload_stage1_results`
+* `upload_stage1_results` (by client worker or manually from resume file)
 * `reserve_stage2_work`
 * `upload_stage2_results`
+* `get_recent_factors`
+* `get_status` / `get_progress`
 
 ### Client
 
@@ -74,12 +77,18 @@ Trying to learn from [WraithX's ecm.py](https://www.mersenneforum.org/showthread
 Features to name a few
 
 * Canceling other stage2 curves when factor found
+* Email reports, Progress Reports
+* parselling out resume files
+* Running multiple curves per innovation
+  * Seems not to matter much for resuming stage 1, maybe more important if running stage 1 and 2 together.
 
 Difficulties
 
 * Lots of code to communicate with ecm
-  * Lots of code related to setting arguments
+  * Lots of code related to arguments
     * maxmem: Learning from prime95 it's a hard problem to choose optimal memory split between workers.
+* globals Ugh
+*
 
 
 ## Open Questions
