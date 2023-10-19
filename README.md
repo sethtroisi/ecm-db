@@ -17,17 +17,27 @@ Based on pull based client model from CADO-nfs, primenet.
 
 ```mermaid
 sequenceDiagram;
-    participant GC as GPU_Client
+    participant F as Front End
     participant S as Server
+    participant GC as GPU_Client
     participant CC as CPU_Client
 
-    GC->>S: get_stage_1_work
-    S-->>GC: reserve_stage_1
+    F->>+S: Queue Curves(N, B1, B2)
+
+    GC->>+S: get_stage_1_work
+    activate GC
+    S-->>-GC: reserve_stage_1
     GC->>S: upload_stage1_results
+    deactivate GC
+    S-->>F: progress
 
     CC->>S: reserve_stage2_work
+    activate CC
     S-->>CC: reservation
     CC->>S: upload_stage2_results
+    deactivate CC
+
+    S-->>-F: progress
 ```
 
 ### Server
