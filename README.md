@@ -11,7 +11,7 @@
 
 ## Rough Design
 
-Based on pull based client model from CADO-nfs, primenet.
+Based on pull based client model from CADO-nfs, primenet, BOINC.
 
 ### Sequence Diagram
 
@@ -66,3 +66,36 @@ Runs "ecm" and tracking saving (and uploading) output
 ### Front-end
 
 Some front-end to the server that lets you see factors found, query progress, queue numbers
+
+## Complications
+
+Trying to learn from [WraithX's ecm.py](https://www.mersenneforum.org/showthread.php?t=15508).
+
+Features to name a few
+
+* Canceling other stage2 curves when factor found
+
+Difficulties
+
+* Lots of code to communicate with ecm
+  * Lots of code related to setting arguments
+    * maxmem: Learning from prime95 it's a hard problem to choose optimal memory split between workers.
+
+
+## Open Questions
+
+### 1 client for many ecm instances?
+
+Pros:
+  * Max mem is easier (split equally)
+  * Easy to stop early
+  * Can reserve all of a number's stage 1 curves without worrying about things to much
+Cons:
+  * Makes code uglier for multiple work units at the same time...
+
+### Would this make more sense inside BOINC / PrimeNet?
+
+Does BOINC support not verifying workunits?
+Is there some way to verify ECM results?
+  * Seems vaguely like VDF could be adopted
+  * Any VDF papers covering elliptic curves?
