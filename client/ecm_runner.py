@@ -1,5 +1,6 @@
 """Takes a Work Unit and runs some quantum of with ecm. """
 
+import multiprocessing as mp
 import re
 import subprocess
 import time
@@ -36,7 +37,7 @@ class EcmOutput:
     runtime: float
 
 
-RE_FACTORS_FMT1 = re.compile(r"\bfactor.*: ([0-9]*)$", re.I | re.MULTILINE)
+RE_FACTORS_FMT1 = re.compile(r"factor found.*: ([0-9]*)$", re.I | re.MULTILINE)
 RE_FACTORS_FMT2 = re.compile(r"^([0-9]*) [0-9()+*/#!-]", re.I | re.MULTILINE)
 
 
@@ -46,6 +47,7 @@ def get_command(wu: WorkUnit, env: Env) -> List[str]:
     cmd.extend(wu.params)
     cmd.extend(env.extra_params)
     if env.input_path:
+        # TODO probably needs more thought than this
         cmd.append("-resume")
         cmd.append(f"{env.input_path}")
 
@@ -55,13 +57,6 @@ def get_command(wu: WorkUnit, env: Env) -> List[str]:
         cmd.append(wu.B2)
 
     return cmd
-
-
-def run(wu: WorkUnit, env: Env) -> subprocess.CompletedProcess:
-    """Run a WorkUnit in Env"""
-    command = get_command(wu, env)
-    output = subprocess.run(command, input=str(wu.n), capture_output=True, text=True)
-    return output
 
 
 def parse_returncode(code: int):
@@ -75,28 +70,27 @@ def parse_returncode(code: int):
     """
     return code & 1, (code >> 1) & 1, (code >> 2) & 1, (code >> 3) & 1
 
-def run_resume(wu: WorkUnit, env: Env) -> EcmOutput:
-    """Run each line in a resume file seperately"""
-    pass
-
 
 def get_fake_work_units(count: int) -> List[WorkUnit]:
     import random
     units = []
     for _ in range(count):
         uid = random.randint(0, 10**9)
-        wu = WorkUnit(uid, 2 ** 137 - 1, ("-v", "-timestamp"), B1="1e5", B2="1e7")
+        N = "2 ^ 137 - 1"
+        wu = WorkUnit(uid, N, ("-v", "-timestamp"), B1="1e6", B2="1e8")
         units.append(wu)
     return units
 
 
 def get_env():
     # TODO use params and stuff
-    return Env("../../gmp-ecm/ecm", ("-q",), "", "test.output")
+    # return Env("../../gmp-ecm/ecm", ("-q",), "", "test.output")
+    return Env("../../gmp-ecm/ecm", tuple(), "", "test.output")
 
 
-def process_output(wu: WorkUnit, output: subprocess.CompletedProcess):
-    is_error, found_factor, prime_factor, prime_coprime = parse_returncode(output.returncode)
+def process_output(output: subprocess.CompletedProcess):
+    is_error, found_factor, prime_factor, prime_coprime = (
+            parse_returncode(output.returncode))
     assert not is_error
 
     factors = tuple()
@@ -104,50 +98,88 @@ def process_output(wu: WorkUnit, output: subprocess.CompletedProcess):
         print("-" * 80)
         print(output.stdout)
         print(f"Return: {output.returncode} {is_error = }, {found_factor = }, {prime_factor = }")
-        # Find factor in output either
-        #   .*Factor.*[NUMBER]
-        # Or in quiet mode
-        #   [NUMBER] [COPRIME]
         factors1 = RE_FACTORS_FMT1.findall(output.stdout)
         factors2 = RE_FACTORS_FMT2.findall(output.stdout)
-        factors = tuple(map(int, factors1 + factors2))
+        factors = tuple(sorted(set(map(int, factors1 + factors2))))
         print(factors)
         print("-" * 80)
         assert factors
 
-    result = EcmOutput(factors, output.returncode, resume_line="", status="", runtime=0)
+    result = EcmOutput(
+        factors,
+        output.returncode,
+        resume_line="",
+        status=output.stdout,
+        runtime=0)
 
-"""
-@dataclass()
-class EcmOutput:
-    factors: Tuple[str]
-    exit_status: int
-    resume_line: str
-    status: str
-    runtime: float
-"""
+    return result
 
 
+def run_resume(wu: WorkUnit, env: Env) -> EcmOutput:
+    """Run each line in a resume file seperately"""
+    # TODO implement this
+    raise NotImplementedError
 
-def run_client():
+
+def run(wu: WorkUnit, env: Env) -> subprocess.CompletedProcess:
+    """Run a WorkUnit in Env"""
+    command = get_command(wu, env)
+    output = subprocess.run(
+        command, input=str(wu.n), capture_output=True, text=True)
+    return output
+
+
+def ecm_worker(name, work, results):
     env = get_env()
+    print("Started worker", name)
+    while True:
+        wu = work.get()
+        out = run(wu, env)
+        result = process_output(out)
+        results.put((wu, result))
 
-    # TODO get WorkUnits from server
+
+def start_workers(work: mp.Queue, results: mp.Queue, num_workers: int):
+    workers = []
+    for i in range(num_workers):
+        worker = mp.Process(target=ecm_worker, name=i, args=(i, work, results))
+        worker.start()
+        workers.append(worker)
+    return workers
+
+
+def main_loop():
+    work = mp.Queue()
+    results = mp.Queue()
+
+    workers = start_workers(work, results, num_workers=4)
+
     try:
-        work = []
         while True:
-            if len(work) == 0:
-                work.extend(get_fake_work_units(1))
+            while not results.empty():
+                wu, result = results.get_nowait()
+                print("Completed:", datetime.now().isoformat(), wu)
+                if result.factors:
+                    print("Result:", result, "from", wu)
+                    print("FACTOR:", result.factors)
+                    for worker in workers:
+                        worker.terminate()
+                    return
 
-            # TODO this isn't a work
-            wu = work.pop()
-            #print(datetime.now().isoformat(), len(work), wu)
+            for worker in workers:
+                assert worker.is_alive()
 
-            output = run(wu, env)
-            process_output(wu, output)
+            if work.empty():
+                # TODO get real WorkUnits from server
+                # print("Adding work units")
+                for wu in get_fake_work_units(10):
+                    work.put(wu)
+                print("work queued:", work.qsize())
+
+            time.sleep(0.02)
 
     except KeyboardInterrupt:
         print("TODO graceful shutdown in the future")
 
 
-run_client()
+main_loop()
