@@ -94,9 +94,12 @@ def get_command(wu: WorkUnit, env: Env) -> List[str]:
         # Reads the resume line from stdin
         cmd.extend(["-resume", "-"])
 
+        assert wu.B1
+
     if wu.B1:
         cmd.append(wu.B1)
     if wu.B2:
+        assert wu.B1
         cmd.append(wu.B2)
 
     return (stdin, cmd)
@@ -124,6 +127,7 @@ def get_work_units(args, count: int) -> List[WorkUnit]:
 
 
 def resume_to_work_units(args, count) -> List[WorkUnit]:
+    last_B1 = None
     with open(args.resume) as f:
         units = []
         for i, line in enumerate(f):
@@ -137,7 +141,14 @@ def resume_to_work_units(args, count) -> List[WorkUnit]:
             match = RE_B1_B2.search(line)
             assert match, "B1, B2 not found in resume line"
             B1, _, B2 = match.groups()
-            unit = WorkUnit(i, N, ("-v",), B1=B1, B2=B2, resume_line=line)
+            if args.B1 and B1 != args.B1 and B1 != last_B1:
+                last_B1 = B1
+                print()
+                print(f"Ignoring --B1={args.B1} for B1={B1} from resume file")
+                time.sleep(1)
+                print()
+
+            unit = WorkUnit(i, N, ("-v",), B1=B1, B2=B2 or args.B2, resume_line=line)
             units.append(unit)
 
     return units
@@ -170,6 +181,7 @@ def process_output(output: subprocess.CompletedProcess):
     if found_factor:
         print("-" * 80)
         print(output.stdout)
+        print("-" * 80)
         print(f"Return: {output.returncode} | {is_error = }, {found_factor = }, {prime_factor = }")
         factors1 = RE_FACTORS_FMT1.findall(output.stdout)
         factors2 = RE_FACTORS_FMT2.findall(output.stdout)
@@ -238,10 +250,11 @@ def main_loop(args):
         while True:
             while not results.empty():
                 wu, result = results.get_nowait()
-                # print("Completed:", datetime.now().isoformat(), wu)
                 total_finished += 1
                 finished[wu.n].append(result)
                 count_n = len(finished[wu.n])
+
+                #print("Completed:", datetime.now().isoformat(), wu)
                 if count_n % 100 == 0:
                     print("Curves:", count_n, "N:", wu.n)
 
@@ -258,9 +271,8 @@ def main_loop(args):
 
             if work.empty():
                 # TODO get real WorkUnits from server
-                # print("Adding work units")
                 added = 0
-                for wu in get_work_units(args, 10):
+                for wu in get_work_units(args, 2 * args.threads):
                     added += 1
                     work.put(wu)
                     if wu.n not in finished:
@@ -268,15 +280,21 @@ def main_loop(args):
                         finished[wu.n]
                         assert wu.n in finished
                         print("New N:", wu.n)
+                total_work += added
 
-                if added == 0 and total_work == total_finished:
-                    # No new work, all work finished
-                    assert work.empty()
-                    assert results.empty()
-                    for worker in workers:
-                        if worker:
-                            worker.terminate()
-                    exit(0)
+                if added:
+                    print(f"Added {added} work units")
+                else:
+                    print(f"No Work to add: {total_finished}/{total_work}")
+                    if total_work == total_finished:
+                        # No new work, all work finished
+                        assert work.empty()
+                        assert results.empty()
+                        for worker in workers:
+                            if worker:
+                                worker.terminate()
+                        # Done!
+                        return
 
             time.sleep(0.02)
 
