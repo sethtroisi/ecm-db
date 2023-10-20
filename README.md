@@ -74,21 +74,27 @@ Some front-end to the server that lets you see factors found, query progress, qu
 
 Trying to learn from [WraithX's ecm.py](https://www.mersenneforum.org/showthread.php?t=15508).
 
-Features to name a few
+a Few Fabulous Features:
 
 * Canceling other stage2 curves when factor found
 * Email reports, Progress Reports
 * parselling out resume files
 * Running multiple curves per innovation
   * Seems not to matter much for resuming stage 1, maybe more important if running stage 1 and 2 together.
+* rudimentary param validation (`is_number`, `is_number_range`, `is_valid_input`)
+* QoL output (`num_digits`, `abbreviate`, Step 1/2 timing)
+* preexec_fn (for setting nice value)
 
-Difficulties
+Difficulties:
 
-* Lots of code to communicate with ecm
-  * Lots of code related to arguments
-    * maxmem: Learning from prime95 it's a hard problem to choose optimal memory split between workers.
-* globals Ugh
-*
+* Code is very long
+  * Lots of code for input parsing
+  * Lots of code related to ecm arguments
+  * Lots of code to communicate with ecm
+   * maxmem: Learning from prime95 it's a hard problem to choose optimal memory split between workers.
+  * Output formatting code is verbose
+* globals sprinkled everywhere!
+
 
 
 ## Open Questions
@@ -108,3 +114,7 @@ Does BOINC support not verifying workunits?
 Is there some way to verify ECM results?
   * Seems vaguely like VDF could be adopted
   * Any VDF papers covering elliptic curves?
+
+### Any argumuents that server and client need to negotiate?
+
+* B2? maxmem? k?
