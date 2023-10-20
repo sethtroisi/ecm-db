@@ -42,10 +42,12 @@ class EcmOutput:
     runtime: float
 
 
-RE_FACTORS_FMT1 = re.compile(r"factor found.*: ([0-9]*)$", re.I | re.MULTILINE)
-RE_FACTORS_FMT2 = re.compile(r"^([0-9]*) [0-9()+*/#!-]", re.I | re.MULTILINE)
+RE_FACTORS_FMT1 = re.compile(r"factor found.*: ([0-9]+)$", re.I | re.MULTILINE)
+RE_FACTORS_FMT2 = re.compile(r"^([0-9]+) [0-9()+*/#!-]", re.I | re.MULTILINE)
 RE_USING = re.compile(r"Using", re.I | re.MULTILINE)
 RE_VERSION = re.compile(r"^GMP-ECM ", re.I | re.MULTILINE)
+RE_RESUME_N = re.compile(r"\bN=([0-9]+)\b")
+RE_B1_B2 = re.compile(r"\bB1=([0-9]+)\b(.*B2=([0-9]+))?")
 
 
 def get_argparser():
@@ -56,9 +58,21 @@ def get_argparser():
             help='Number of threads to run')
     parser.add_argument('--B1', '--b1', help='B1 param')
     parser.add_argument('--B2', '--b2', help='B2 param')
+    parser.add_argument('-r', '--resume', help='Resume residues from file')
     #parser.add_argument('--stop_early', action="store_true", help='Stop after finding first factor')
     parser.add_argument('ecm_path', help='ecm binary')
     return parser
+
+
+def validate_args(args):
+    path = args.ecm_path
+    assert os.path.exists(path), f"ecm_path({path}) doesn't exist"
+    assert os.path.isfile(path), f"ecm_path({path}) isn't a file"
+
+    if not args.resume:
+        assert args.B1, "B1 must be specified (unless resuming)"
+        assert args.N, "N must be specified (unless resuming)"
+
 
 
 def get_env(args):
@@ -68,32 +82,64 @@ def get_env(args):
 
 
 def get_command(wu: WorkUnit, env: Env) -> List[str]:
+    stdin = wu.n
+
     cmd = []
     cmd.append(f"{env.ecm_path}")
     cmd.extend(wu.params)
     cmd.extend(env.extra_params)
-    if env.input_path:
-        # TODO probably needs more thought than this
-        cmd.append("-resume")
-        cmd.append(f"{env.input_path}")
+
+    if wu.resume_line:
+        stdin = wu.resume_line
+        # Reads the resume line from stdin
+        cmd.extend(["-resume", "-"])
 
     if wu.B1:
         cmd.append(wu.B1)
     if wu.B2:
         cmd.append(wu.B2)
 
-    return cmd
+    return (stdin, cmd)
 
 
-def get_fake_work_units(args, count: int) -> List[WorkUnit]:
+def get_work_units(args, count: int) -> List[WorkUnit]:
     import random
-    units = []
-    for _ in range(count):
-        uid = random.randint(0, 10**9)
-        assert args.N
-        assert args.B1
-        wu = WorkUnit(uid, args.N, ("-v", "-timestamp"), B1=args.B1, B2=args.B2)
-        units.append(wu)
+
+    if args.resume:
+        units = resume_to_work_units(args, count)
+        args.resume = None
+        return units
+
+    if args.N:
+        units = []
+        for _ in range(count):
+            uid = random.randint(0, 10**9)
+            assert args.N
+            assert args.B1
+            wu = WorkUnit(uid, args.N, ("-v", "-timestamp"), B1=args.B1, B2=args.B2)
+            units.append(wu)
+        return units
+
+    return []
+
+
+def resume_to_work_units(args, count) -> List[WorkUnit]:
+    with open(args.resume) as f:
+        units = []
+        for i, line in enumerate(f):
+            if not line:
+                continue
+
+            match = RE_RESUME_N.search(line)
+            assert match, "N not found in resume line: " + repr(line)
+            N = match.group()
+
+            match = RE_B1_B2.search(line)
+            assert match, "B1, B2 not found in resume line"
+            B1, _, B2 = match.groups()
+            unit = WorkUnit(i, N, ("-v",), B1=B1, B2=B2, resume_line=line)
+            units.append(unit)
+
     return units
 
 
@@ -133,13 +179,14 @@ def process_output(output: subprocess.CompletedProcess):
         assert factors
 
     version = get_from_stdout(RE_VERSION, output.stdout)
-    using = get_from_stdout(RE_USING, output.stdout)
+    #using = get_from_stdout(RE_USING, output.stdout)
 
     result = EcmOutput(
         factors,
         output.returncode,
         resume_line="",
-        using=using,
+        #using=using,
+        using="",
         version=version,
         status=output.stdout,
         runtime=0)
@@ -147,17 +194,13 @@ def process_output(output: subprocess.CompletedProcess):
     return result
 
 
-def run_resume(wu: WorkUnit, env: Env) -> EcmOutput:
-    """Run each line in a resume file seperately"""
-    # TODO implement this
-    raise NotImplementedError
-
-
 def run(wu: WorkUnit, env: Env) -> subprocess.CompletedProcess:
     """Run a WorkUnit in Env"""
-    command = get_command(wu, env)
+    stdin, command = get_command(wu, env)
+    # print("stdin:", stdin)
+    # print("cmd:  ", command)
     output = subprocess.run(
-        command, input=str(wu.n), capture_output=True, text=True)
+        command, input=stdin, capture_output=True, text=True)
     return output
 
 
@@ -185,6 +228,8 @@ def main_loop(args):
     work = mp.Queue()
     results = mp.Queue()
     finished = defaultdict(list)
+    total_work = 0
+    total_finished = 0
 
     workers = start_workers(env, work, results, num_workers=args.threads)
     time.sleep(0.02)
@@ -194,6 +239,7 @@ def main_loop(args):
             while not results.empty():
                 wu, result = results.get_nowait()
                 # print("Completed:", datetime.now().isoformat(), wu)
+                total_finished += 1
                 finished[wu.n].append(result)
                 count_n = len(finished[wu.n])
                 if count_n % 100 == 0:
@@ -213,7 +259,9 @@ def main_loop(args):
             if work.empty():
                 # TODO get real WorkUnits from server
                 # print("Adding work units")
-                for wu in get_fake_work_units(args, 10):
+                added = 0
+                for wu in get_work_units(args, 10):
+                    added += 1
                     work.put(wu)
                     if wu.n not in finished:
                         # Add to finished
@@ -221,20 +269,32 @@ def main_loop(args):
                         assert wu.n in finished
                         print("New N:", wu.n)
 
-                # print("work queued:", work.qsize())
+                if added == 0 and total_work == total_finished:
+                    # No new work, all work finished
+                    assert work.empty()
+                    assert results.empty()
+                    for worker in workers:
+                        if worker:
+                            worker.terminate()
+                    exit(0)
 
             time.sleep(0.02)
 
     except KeyboardInterrupt:
         print("TODO graceful shutdown in the future")
 
+    except:
+        print("Main thread had exception!")
+        for worker in workers:
+            if worker:
+                worker.terminate()
+        raise
 
 
 if __name__ == "__main__":
     parser = get_argparser()
     args = parser.parse_args()
     print(args)
-
-    assert os.path.isfile(args.ecm_path)
+    validate_args(args)
 
     main_loop(args)
