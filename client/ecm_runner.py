@@ -1,10 +1,13 @@
 """Takes a Work Unit and runs some quantum of with ecm. """
 
+import argparse
 import multiprocessing as mp
+import os
 import re
 import subprocess
 import time
 
+from collections import defaultdict
 from datetime import datetime
 from dataclasses import dataclass
 from typing import List, Tuple
@@ -33,12 +36,35 @@ class EcmOutput:
     factors: Tuple[str]
     exit_status: int
     resume_line: str
+    using: str
+    version: str
     status: str
     runtime: float
 
 
 RE_FACTORS_FMT1 = re.compile(r"factor found.*: ([0-9]*)$", re.I | re.MULTILINE)
 RE_FACTORS_FMT2 = re.compile(r"^([0-9]*) [0-9()+*/#!-]", re.I | re.MULTILINE)
+RE_USING = re.compile(r"Using", re.I | re.MULTILINE)
+RE_VERSION = re.compile(r"^GMP-ECM ", re.I | re.MULTILINE)
+
+
+def get_argparser():
+    parser = argparse.ArgumentParser(description='ecm runner.')
+    parser.add_argument('-N', '-n', help='Number to run')
+    parser.add_argument('-t', '--threads',
+            type=int, default=1,
+            help='Number of threads to run')
+    parser.add_argument('--B1', '--b1', help='B1 param')
+    parser.add_argument('--B2', '--b2', help='B2 param')
+    #parser.add_argument('--stop_early', action="store_true", help='Stop after finding first factor')
+    parser.add_argument('ecm_path', help='ecm binary')
+    return parser
+
+
+def get_env(args):
+    # TODO use params and stuff
+    # return Env(args.ecm_path, ("-q",), "", "test.output")
+    return Env(args.ecm_path, tuple(), "", "test.output")
 
 
 def get_command(wu: WorkUnit, env: Env) -> List[str]:
@@ -59,6 +85,18 @@ def get_command(wu: WorkUnit, env: Env) -> List[str]:
     return cmd
 
 
+def get_fake_work_units(args, count: int) -> List[WorkUnit]:
+    import random
+    units = []
+    for _ in range(count):
+        uid = random.randint(0, 10**9)
+        assert args.N
+        assert args.B1
+        wu = WorkUnit(uid, args.N, ("-v", "-timestamp"), B1=args.B1, B2=args.B2)
+        units.append(wu)
+    return units
+
+
 def parse_returncode(code: int):
     """
     Parse return code according to ecm man page.
@@ -71,21 +109,10 @@ def parse_returncode(code: int):
     return code & 1, (code >> 1) & 1, (code >> 2) & 1, (code >> 3) & 1
 
 
-def get_fake_work_units(count: int) -> List[WorkUnit]:
-    import random
-    units = []
-    for _ in range(count):
-        uid = random.randint(0, 10**9)
-        N = "2 ^ 137 - 1"
-        wu = WorkUnit(uid, N, ("-v", "-timestamp"), B1="1e6", B2="1e8")
-        units.append(wu)
-    return units
-
-
-def get_env():
-    # TODO use params and stuff
-    # return Env("../../gmp-ecm/ecm", ("-q",), "", "test.output")
-    return Env("../../gmp-ecm/ecm", tuple(), "", "test.output")
+def get_from_stdout(regexp, stdout):
+    match = regexp.search(stdout)
+    assert match, (regexp, stdout)
+    return match.group()
 
 
 def process_output(output: subprocess.CompletedProcess):
@@ -97,18 +124,23 @@ def process_output(output: subprocess.CompletedProcess):
     if found_factor:
         print("-" * 80)
         print(output.stdout)
-        print(f"Return: {output.returncode} {is_error = }, {found_factor = }, {prime_factor = }")
+        print(f"Return: {output.returncode} | {is_error = }, {found_factor = }, {prime_factor = }")
         factors1 = RE_FACTORS_FMT1.findall(output.stdout)
         factors2 = RE_FACTORS_FMT2.findall(output.stdout)
         factors = tuple(sorted(set(map(int, factors1 + factors2))))
-        print(factors)
+        print("Factor(s):", " ".join(map(str, factors)))
         print("-" * 80)
         assert factors
+
+    version = get_from_stdout(RE_VERSION, output.stdout)
+    using = get_from_stdout(RE_USING, output.stdout)
 
     result = EcmOutput(
         factors,
         output.returncode,
         resume_line="",
+        using=using,
+        version=version,
         status=output.stdout,
         runtime=0)
 
@@ -129,9 +161,7 @@ def run(wu: WorkUnit, env: Env) -> subprocess.CompletedProcess:
     return output
 
 
-def ecm_worker(name, work, results):
-    env = get_env()
-    print("Started worker", name)
+def ecm_worker(name, env, work, results):
     while True:
         wu = work.get()
         out = run(wu, env)
@@ -139,28 +169,39 @@ def ecm_worker(name, work, results):
         results.put((wu, result))
 
 
-def start_workers(work: mp.Queue, results: mp.Queue, num_workers: int):
+def start_workers(env: Env, work: mp.Queue, results: mp.Queue, num_workers: int):
+    print(f"Starting {num_workers}")
     workers = []
     for i in range(num_workers):
-        worker = mp.Process(target=ecm_worker, name=i, args=(i, work, results))
+        worker = mp.Process(target=ecm_worker, name=i, args=(i, env, work, results))
         worker.start()
         workers.append(worker)
     return workers
 
 
-def main_loop():
+def main_loop(args):
+    env = get_env(args)
+
     work = mp.Queue()
     results = mp.Queue()
+    finished = defaultdict(list)
 
-    workers = start_workers(work, results, num_workers=4)
+    workers = start_workers(env, work, results, num_workers=args.threads)
+    time.sleep(0.02)
 
     try:
         while True:
             while not results.empty():
                 wu, result = results.get_nowait()
-                print("Completed:", datetime.now().isoformat(), wu)
+                # print("Completed:", datetime.now().isoformat(), wu)
+                finished[wu.n].append(result)
+                count_n = len(finished[wu.n])
+                if count_n % 100 == 0:
+                    print("Curves:", count_n, "N:", wu.n)
+
                 if result.factors:
                     print("Result:", result, "from", wu)
+                    print("Curve count:", count_n)
                     print("FACTOR:", result.factors)
                     for worker in workers:
                         worker.terminate()
@@ -172,9 +213,15 @@ def main_loop():
             if work.empty():
                 # TODO get real WorkUnits from server
                 # print("Adding work units")
-                for wu in get_fake_work_units(10):
+                for wu in get_fake_work_units(args, 10):
                     work.put(wu)
-                print("work queued:", work.qsize())
+                    if wu.n not in finished:
+                        # Add to finished
+                        finished[wu.n]
+                        assert wu.n in finished
+                        print("New N:", wu.n)
+
+                # print("work queued:", work.qsize())
 
             time.sleep(0.02)
 
@@ -182,4 +229,12 @@ def main_loop():
         print("TODO graceful shutdown in the future")
 
 
-main_loop()
+
+if __name__ == "__main__":
+    parser = get_argparser()
+    args = parser.parse_args()
+    print(args)
+
+    assert os.path.isfile(args.ecm_path)
+
+    main_loop(args)
