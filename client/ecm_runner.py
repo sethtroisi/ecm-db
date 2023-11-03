@@ -27,8 +27,6 @@ class WorkUnit:
 class Env:
     ecm_path: str
     extra_params: Tuple[str]
-    input_path: str
-    output_path: str
 
 
 @dataclass()
@@ -49,23 +47,46 @@ RE_VERSION = re.compile(r"^GMP-ECM ", re.I | re.MULTILINE)
 RE_RESUME_N = re.compile(r"\bN=([0-9]+)\b")
 RE_B1_B2 = re.compile(r"\bB1=([0-9]+)\b(.*B2=([0-9]+))?")
 
+ECM_ACCEPTED_ARGS = (
+    'x0', 'y0', 'param', 'A', 'torsion', 'k', 'power', 'dickson',
+    'timestamp',
+    'mpzmod', 'modmuln', 'redc', 'nobase2', 'nobase2s2', 'base2'
+    'ntt', 'no-ntt',
+    'save', 'savea', 'chkpnt', 'treefile',
+    'primetest',
+    'maxmem',
+    'stage1time', 'go'
+)
+ECM_DISALLOWED = (
+    'pm1', 'pp1', 'I', 'inp', 'one', 'printconfig', 'bsaves',
+    'bloads', 'gpu', 'cgbn'
+)
+ECM_NUMERIC_ARGS = (
+    'x0', 'y0', 'param', 'A', 'torsion', 'k', 'power', 'dickson',
+    'maxmem', 'stage1time', 'go'
+)
+ECM_RESERVED_ARGS = (
+    'c', 'sigma', 'resume', 'q', 'v'
+)
+
 
 def get_argparser():
     parser = argparse.ArgumentParser(description='ecm runner.')
     parser.add_argument('-N', '-n', help='Number to run')
     parser.add_argument('-t', '--threads',
-            type=int, default=1,
-            help='Number of threads to run')
+                        type=int, default=1,
+                        help='Number of threads to run')
     parser.add_argument('--B1', '--b1', help='B1 param')
     parser.add_argument('--B2', '--b2', help='B2 param')
     parser.add_argument('-r', '--resume', help='Resume residues from file')
-    #parser.add_argument('--stop_early', action="store_true", help='Stop after finding first factor')
-    parser.add_argument('ecm_path', help='ecm binary')
+    parser.add_argument('-b', '--ecm_binary', help='Path to ecm binary')
+    parser.add_argument('ecm_args', nargs=argparse.REMAINDER,
+                        help='arguments to pass through to ecm')
     return parser
 
 
 def validate_args(args):
-    path = args.ecm_path
+    path = args.ecm_binary
     assert os.path.exists(path), f"ecm_path({path}) doesn't exist"
     assert os.path.isfile(path), f"ecm_path({path}) isn't a file"
 
@@ -73,12 +94,32 @@ def validate_args(args):
         assert args.B1, "B1 must be specified (unless resuming)"
         assert args.N, "N must be specified (unless resuming)"
 
+    for bound in [args.B1, args.B2]:
+        if bound:
+            assert re.match('^([0-9.]*e[1-9][0-9]*|[1-9][0-9]*)$', bound), (
+                f"Invalid B1/B2 Bound: {bound}")
+
+    for i, full_arg in enumerate(args.ecm_args):
+        arg = full_arg.strip('-')
+        last_arg = None if i == 0 else args.ecm_args[-1].strip('-')
+
+        if arg in ECM_ACCEPTED_ARGS:
+            assert full_arg.startswith('-'), f"extra arg {arg!r} is missing dash"
+            continue
+
+        if arg.isnumeric() or re.match(r'^[0-9.]+e[0-9]+$', arg):
+            continue
+
+        if re.match(r'^[0-9-]+$', arg) and last_arg in ECM_NUMERIC_ARGS:
+            continue
+
+        assert arg not in ECM_RESERVED_ARGS, f"{arg!r} is reserved for this program"
+        assert arg not in ECM_DISALLOWED, f"{arg!r} contradicts use of this program"
+        assert False, f"Invalid ecm arg: {arg!r} from {args.ecm_args}"
 
 
 def get_env(args):
-    # TODO use params and stuff
-    # return Env(args.ecm_path, ("-q",), "", "test.output")
-    return Env(args.ecm_path, tuple(), "", "test.output")
+    return Env(args.ecm_binary, ('-v',) + tuple(args.ecm_args))
 
 
 def get_command(wu: WorkUnit, env: Env) -> List[str]:
@@ -148,7 +189,7 @@ def resume_to_work_units(args, count) -> List[WorkUnit]:
                 time.sleep(1)
                 print()
 
-            unit = WorkUnit(i, N, ("-v",), B1=B1, B2=B2 or args.B2, resume_line=line)
+            unit = WorkUnit(i, N, tuple(), B1=B1, B2=B2 or args.B2, resume_line=line)
             units.append(unit)
 
     return units
@@ -191,14 +232,13 @@ def process_output(output: subprocess.CompletedProcess):
         assert factors
 
     version = get_from_stdout(RE_VERSION, output.stdout)
-    #using = get_from_stdout(RE_USING, output.stdout)
+    using = get_from_stdout(RE_USING, output.stdout)
 
     result = EcmOutput(
         factors,
         output.returncode,
         resume_line="",
-        #using=using,
-        using="",
+        using=using,
         version=version,
         status=output.stdout,
         runtime=0)
@@ -225,7 +265,7 @@ def ecm_worker(name, env, work, results):
 
 
 def start_workers(env: Env, work: mp.Queue, results: mp.Queue, num_workers: int):
-    print(f"Starting {num_workers}")
+    print(f"Starting {num_workers} workers")
     workers = []
     for i in range(num_workers):
         worker = mp.Process(target=ecm_worker, name=i, args=(i, env, work, results))
@@ -254,9 +294,8 @@ def main_loop(args):
                 finished[wu.n].append(result)
                 count_n = len(finished[wu.n])
 
-                #print("Completed:", datetime.now().isoformat(), wu)
                 if count_n % 100 == 0:
-                    print("Curves:", count_n, "N:", wu.n)
+                    print("Curves:", count_n, "N:", wu.n, "@", datetime.now().isoformat())
 
                 if result.factors:
                     print("Result:", result, "from", wu)
@@ -283,7 +322,7 @@ def main_loop(args):
                 total_work += added
 
                 if added:
-                    print(f"Added {added} work units")
+                    print(f"Added {added} work units, finished {total_finished}")
                 else:
                     print(f"No Work to add: {total_finished}/{total_work}")
                     if total_work == total_finished:
@@ -312,7 +351,10 @@ def main_loop(args):
 if __name__ == "__main__":
     parser = get_argparser()
     args = parser.parse_args()
-    print(args)
+    # Remove the first -- from args.ecm_args if it exists
+    if '--' in args.ecm_args:
+        args.ecm_args.remove('--')
     validate_args(args)
+    print("Args:", args)
 
     main_loop(args)
