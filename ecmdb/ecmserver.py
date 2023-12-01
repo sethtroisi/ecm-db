@@ -1,7 +1,8 @@
 import contextlib
 import datetime
-import os
 import logging
+import numbers
+import os
 import re
 import time
 
@@ -112,7 +113,7 @@ class EcmServer:
 
 
     def _is_number(n):
-        return isinstance(n, int) or re.match("[1-9][0-9]*", n)
+        return isinstance(n, numbers.Integral) or re.match("[1-9][0-9]*", n)
 
 
     def _is_number_expr(expr):

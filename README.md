@@ -9,6 +9,7 @@ Distributed Stateful ECM
 - [ ] status
 - [ ] stats
 - [ ] multiprocessing
+- [ ] import from resume file
 
 ### Long term goals
 
@@ -17,6 +18,7 @@ Distributed Stateful ECM
   - [ ] by 5 bits (2019 optimized)
 - [ ] Odds of finding a factor at X digits
 - [ ] Odds of finding a factor with this curve
+- [ ] Factor DB
 - [ ] Website
   - [ ] List of found factors
   - [ ] Reservations
