@@ -354,6 +354,7 @@ def main_loop(args):
 
     # TODO configure with arg?
     stop_on_factor = True
+    add_more = True
 
     work = mp.Queue()
     results = mp.Queue()
@@ -366,13 +367,13 @@ def main_loop(args):
     workers = start_workers(env, work, results, num_workers=args.threads)
     time.sleep(0.02)
 
-    add_more = True
 
     if args.resume:
         units = resume_to_work_units(args)
         for wu in units:
             work.put(wu)
         total_work = len(units)
+        stop_on_factor = False
         add_more = False
         print(f"Added {len(units)} work units from -resume {args.resume}")
 
