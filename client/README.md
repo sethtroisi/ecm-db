@@ -5,9 +5,9 @@ Tool to run and report a ecm-db workunit
 
 ### MVP
 
-- [ ] arg list
-- [ ] output
+- [ ] arg list (What did I mean by this?)
 - [ ] report result to server
+- [x] output
 
 ### Testing
 
@@ -24,6 +24,8 @@ python ecm_runner.py -b ../../gmp-ecm/ecm --resume resume.16 --B1 10000000000 --
 
 ### Long term goals
 
+- [x] json
+- [ ] eta
 - [ ] tests
 - [ ] local checkpointing
 - [ ] RAM coordination

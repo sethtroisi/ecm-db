@@ -1,11 +1,12 @@
 """Takes a Work Unit and runs some quantum of with ecm. """
 
 import argparse
+import json
 import multiprocessing as mp
 import os
+import pprint
 import random
 import re
-import pprint
 import subprocess
 import time
 
@@ -31,6 +32,7 @@ class Env:
     extra_params: Tuple[str]
 
 
+# TODO should this include sigma?
 @dataclasses.dataclass()
 class EcmOutput:
     factors: Tuple[str]
@@ -39,7 +41,7 @@ class EcmOutput:
     using: str
     version: str
     output: str
-    timings: Tuple[float]
+    timings: Tuple[int]
     runtime: float
 
 
@@ -85,6 +87,10 @@ def get_argparser():
     parser.add_argument('--B2', '--b2', help='B2 param')
     parser.add_argument('-r', '--resume', help='Resume residues from file')
     parser.add_argument('-b', '--ecm_binary', help='Path to ecm binary')
+    parser.add_argument('--log_name',
+                        default=None,
+                        help=('log name, default: <resume>.json.log or '
+                        'ecm_runner_<RAND>.json.log in the current directory.'))
     parser.add_argument('ecm_args', nargs=argparse.REMAINDER,
                         help='arguments to pass through to ecm')
     return parser
@@ -213,11 +219,11 @@ def _get_match(regexp, stdout):
     match = regexp.search(stdout)
     assert match, (regexp, stdout)
     if regexp.groups == 1:
-      return match.groups(1)
+      return match.group(1)
     return match.group()
 
 
-def process_output(output: subprocess.CompletedProcess):
+def process_output(output: subprocess.CompletedProcess, runtime: float):
     is_error, found_factor, prime_factor, prime_cofactor = (
             parse_returncode(output.returncode))
     assert not is_error
@@ -238,8 +244,12 @@ def process_output(output: subprocess.CompletedProcess):
 
     version = _get_match(RE_VERSION, output.stdout)
     using = _get_match(RE_USING, output.stdout)
-    step1_timing = _get_match(RE_STEP1_TIMING, output.stdout)
-    step2_timing = _get_match(RE_STEP2_TIMING, output.stdout)
+    step1_timing = int(_get_match(RE_STEP1_TIMING, output.stdout))
+    # Not present if factor found in step 1
+    if found_factor and "Factor found in step 1" in output.stdout:
+        step2_timing = 0
+    else:
+        step2_timing = int(_get_match(RE_STEP2_TIMING, output.stdout))
 
     result = EcmOutput(
         factors,
@@ -249,7 +259,7 @@ def process_output(output: subprocess.CompletedProcess):
         version=version,
         output=output.stdout,
         timings=(step1_timing, step2_timing),
-        runtime=0)
+        runtime=runtime)
 
     return result
 
@@ -267,8 +277,10 @@ def run(wu: WorkUnit, env: Env) -> subprocess.CompletedProcess:
 def ecm_worker(name, env, work, results):
     while True:
         wu = work.get()
+        t0 = time.time()
         out = run(wu, env)
-        result = process_output(out)
+        t1 = time.time()
+        result = process_output(out, t1-t0)
         results.put((wu, result))
 
 
@@ -301,7 +313,14 @@ def short_repr(n):
     return n
 
 
-def verbose_result_format(wu, result, pp=pprint.PrettyPrinter()):
+def json_result_format(wu, result):
+    return json.dumps([
+        dataclasses.asdict(wu),
+        dataclasses.asdict(result),
+    ])
+
+
+def verbose_result_format(wu, result, pp):
     partial = dataclasses.replace(result, output=f"OMMITTED<{len(result.output)}>")
 
     lines = ["v" * 80]
@@ -314,36 +333,67 @@ def verbose_result_format(wu, result, pp=pprint.PrettyPrinter()):
     return "\n".join(lines)
 
 
+def get_log_fn(args):
+    """
+    Determine log filename base.
+
+    Depends on --log_name, --resume
+    """
+    fn = args.log_name
+    if fn:
+        # Strip any trailing .log or .json
+        while fn.endswith((".log", ".json")):
+            base, ext = os.path.splitext(fn)
+            assert ext in (".log", ".json")
+            fn = base
+    elif args.resume:
+        fn = args.resume
+    else:
+        fn = f"ecm_runner_{random.randint(0, 99999):5d}"
+
+    return fn + ".log"
+
+
 class ProcessResults:
-  def __init__(self):
-    self.results = defaultdict(list)
-    self.log_fn = f"ecm_runner_{random.randint(0, 99999):5d}.log"
-    self.saved = 0
-    self.f = None
+  def __init__(self, log_fn):
     self.pp = pprint.PrettyPrinter(width=80, compact=True)
+    self.results = defaultdict(list)
+
+    assert log_fn.endswith(".log") and not log_fn.endswith(".json.log")
+    self.log_fn_text = log_fn
+    self.log_fn_json = log_fn.replace(".log", ".json.log")
+    assert not os.path.exists(self.log_fn_text), f"{self.log_fn_text!r} already exists!"
+    assert not os.path.exists(self.log_fn_json), f"{self.log_fn_json!r} already exists!"
+    print(f"Logging results to {self.log_fn_text!r}")
+    print(f"Logging results to {self.log_fn_json!r}")
+    self.log_f_text = None
+    self.log_f_json = None
+
 
   def _save_result(self, wu, result):
-    if not self.f:
-      print(f"Saving results to {self.log_fn!r}")
-      self.f = open(self.log_fn, "w")
+    if not self.log_f_text:
+      self.log_f_text = open(self.log_fn_text, "w")
+      self.log_f_json = open(self.log_fn_json, "w")
 
-    self.f.write(verbose_result_format(wu, result, pp=self.pp))
-    self.f.write("\n")
+    self.log_f_text.write(verbose_result_format(wu, result, self.pp))
+    self.log_f_text.write("\n")
+    self.log_f_json.write(json_result_format(wu, result))
+    self.log_f_json.write("\n")
 
 
   def process(self, wu, result):
     self.results[wu.n].append(result)
-    self.saved += 1
     count_n = len(self.results[wu.n])
 
     self._save_result(wu, result)
 
     if print_nth_curve(count_n):
         n = short_repr(wu.n)
-        print(f"Result: {self.saved}, Curve: {count_n} N: {n} @ {datetime.now().isoformat()}")
+        total_curves = sum(len(v) for v in self.results.values())
+        print(f"Result: {total_curves}, Curve: {count_n} N: {n} @ {datetime.now().isoformat()}")
 
     if result.factors:
-        print(verbose_result_format(wu, result, pp=self.pp))
+        print(verbose_result_format(wu, result, self.pp))
         print("Curve count:", count_n)
         print("Factor(s):", ", ".join(map(str, result.factors)))
     return result.factors
@@ -362,11 +412,8 @@ def main_loop(args):
     total_finished = 0
     seen = set()
 
-    process_results = ProcessResults()
-
     workers = start_workers(env, work, results, num_workers=args.threads)
     time.sleep(0.02)
-
 
     if args.resume:
         units = resume_to_work_units(args)
@@ -376,6 +423,9 @@ def main_loop(args):
         stop_on_factor = False
         add_more = False
         print(f"Added {len(units)} work units from -resume {args.resume}")
+
+    log_name = get_log_fn(args)
+    process_results = ProcessResults(log_name)
 
     try:
         while True:
