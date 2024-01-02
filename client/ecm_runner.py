@@ -86,7 +86,8 @@ def get_argparser():
     parser.add_argument('--B1', '--b1', help='B1 param')
     parser.add_argument('--B2', '--b2', help='B2 param')
     parser.add_argument('-r', '--resume', help='Resume residues from file')
-    parser.add_argument('-b', '--ecm_binary', help='Path to ecm binary')
+    parser.add_argument('-b', '--ecm_binary', help='Path to ecm binary',
+                        required=True)
     parser.add_argument('--log_name',
                         default=None,
                         help=('log name, default: <resume>.json.log or '
@@ -321,7 +322,7 @@ def json_result_format(wu, result):
 
 
 def verbose_result_format(wu, result, pp):
-    partial = dataclasses.replace(result, output=f"OMMITTED<{len(result.output)}>")
+    partial = dataclasses.replace(result, output=f"OMITTED<{len(result.output)}>")
 
     lines = ["v" * 80]
     lines.append(pp.pformat(wu).strip())
@@ -349,7 +350,7 @@ def get_log_fn(args):
     elif args.resume:
         fn = args.resume
     else:
-        fn = f"ecm_runner_{random.randint(0, 99999):5d}"
+        fn = f"ecm_runner_{random.randint(0, 99999):05d}"
 
     return fn + ".log"
 
@@ -377,8 +378,11 @@ class ProcessResults:
 
     self.log_f_text.write(verbose_result_format(wu, result, self.pp))
     self.log_f_text.write("\n")
+    self.log_f_text.flush()
+
     self.log_f_json.write(json_result_format(wu, result))
     self.log_f_json.write("\n")
+    self.log_f_json.flush()
 
 
   def process(self, wu, result):
