@@ -70,7 +70,7 @@ def remove_matched(args, result_fn, finished):
 def main(args):
   finished = read_log(args.log_file)
   if not finished:
-    print(f"No finished results in {log_fn!r}")
+    print(f"No finished results in {args.log_file!r}")
     exit(1)
 
   new_name = args.resume_file + ".filtered"
