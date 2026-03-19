@@ -109,7 +109,8 @@ def validate_args(args):
 
     for bound in [args.B1, args.B2]:
         if bound:
-            assert re.match('^([0-9.]*e[1-9][0-9]*|[1-9][0-9]*)$', bound), (
+            BOUND = "([0-9.]*e[1-9][0-9]*|[1-9][0-9]*)"
+            assert re.match(f'^({BOUND}|{BOUND}-{BOUND})$', bound), (
                 f"Invalid B1/B2 Bound: {bound}")
 
     for i, full_arg in enumerate(args.ecm_args):
