@@ -1,17 +1,18 @@
 """Takes a Work Unit and runs some quantum of with ecm. """
 
 import argparse
+import dataclasses
 import json
 import multiprocessing as mp
 import os
 import pprint
+import queue
 import random
 import re
 import signal
 import subprocess
 import time
 
-import dataclasses
 from collections import defaultdict
 from datetime import datetime
 from typing import List, Tuple
@@ -285,7 +286,13 @@ def ecm_worker(name, env, flag, work, results):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     while flag.value:
-        wu = work.get()
+        try:
+            wu = work.get(True, 0.1)
+        except queue.Empty:
+            # Gives a chance for flag.value to be 0
+            continue
+
+        if not wu: continue
         t0 = time.time()
         out = run(wu, env)
         t1 = time.time()
@@ -405,7 +412,7 @@ class ProcessResults:
     if print_nth_curve(count_n):
         n = short_repr(wu.n)
         total_curves = sum(len(v) for v in self.results.values())
-        print(f"Result: {total_curves}, Curve: {count_n} N: {n} @ {datetime.now().isoformat()}")
+        print(f"Result: {total_curves:<4d} Curve: {count_n:<3d} N: {n} @ {datetime.now().isoformat()}")
 
     if result.factors:
         print(verbose_result_format(wu, result, self.pp))
@@ -452,8 +459,10 @@ def main_loop(args):
                 process_results.process(wu, result)
 
                 if result.factors and stop_on_factor:
+                    print("Factor found stopping workers")
                     for worker in workers:
                         worker.terminate()
+                        worker.join()
                     return
 
             for worker in workers:
@@ -481,6 +490,7 @@ def main_loop(args):
                     # No new work, all work finished
                     assert work.empty()
                     assert results.empty()
+                    print("Work finished, setting active.value = 0 and waiting on join")
                     active.value = 0
                     for worker in workers:
                         worker.join()
