@@ -85,6 +85,8 @@ def get_argparser():
     parser.add_argument('-t', '--threads',
                         type=int, default=1,
                         help='Number of threads to run')
+    parser.add_argument('--start-after',
+                        help='If present skip to after this item in the file')
     parser.add_argument('--B1', '--b1', help='B1 param')
     parser.add_argument('--B2', '--b2', help='B2 param')
     parser.add_argument('-r', '--resume', help='Resume residues from file')
@@ -107,6 +109,7 @@ def validate_args(args):
     if not args.resume:
         assert args.B1, "B1 must be specified (unless resuming)"
         assert args.N, "N must be specified (unless resuming)"
+        assert args.start_after is None
 
     for bound in [args.B1, args.B2]:
         if bound:
@@ -188,6 +191,12 @@ def resume_to_work_units(args) -> List[WorkUnit]:
             match = RE_RESUME_N.search(line)
             assert match, "N not found in resume line: " + repr(line)
             N = match.group(1)
+
+            if args.start_after:
+                if N.startswith(args.start_after):
+                    print(f"\t--start-after={args.start_after} skipped {i+1} lines to {short_repr(N)}")
+                    args.start_after = None
+                continue
 
             match = RE_B1_B2.search(line)
             assert match, "B1, B2 not found in resume line"
@@ -498,27 +507,31 @@ def main_loop(args):
                     return
 
     except KeyboardInterrupt:
-        print("Waiting on open work to finish (Ctrl+C again for immediate exit)")
-        active.value = 0
-        for worker in workers:
-            worker.join(600)
-            worker.close()
-
         # close() can blocked if too much work in the queue.
         try:
             while not work.empty():
                 work.get_nowait()
         except queue.Empty:
             pass
+        print("\n\tRemoved all open work from work queue")
+
+        active.value = 0
+        print("\tWaiting on open work to finish (Ctrl+C again for immediate exit)")
+
+        for worker in workers:
+            worker.join(600)
+            worker.close()
+
+        print("\tAll workers closed")
 
         while not results.empty():
             total_finished += 1
             wu, result = results.get_nowait()
             process_results.process(wu, result)
 
-        for queue in [work, results]:
-            queue.close()
-            queue.join_thread()
+        for q in [work, results]:
+            q.close()
+            q.cancel_join_thread()
 
         return
 
