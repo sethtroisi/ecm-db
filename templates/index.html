@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+  <meta charset="utf-8">
+  <head>
+  <style>
+
+  #main-col {
+    max-width: 90%;
+  }
+
+  #main-col .table {
+    width: auto;
+  }
+
+  @media (min-width: 1400px) {
+    #main-col {
+      max-width: 85%;
+    }
+  }
+
+  @media (min-width: 1400px) {
+    #main-col {
+      max-width: 85%;
+    }
+  }
+
+  </style>
+
+
+{# JQuery #}
+  <script src="//cdnjs.cloudflare.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+
+{# Bootstrap 4 #}
+  <script src="//cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js"></script>
+
+  {% set base="//maxcdn.bootstrapcdn.com/bootstrap/4.0.0" %}
+  <link rel="stylesheet" href="{{base}}/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+  <script src="{{base}}/js/bootstrap.min.js" integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl" crossorigin="anonymous"></script>
+  <link href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css" rel="stylesheet">
+
+{# Datatables for sorting rows; See https://datatables.net/download/ #}
+  <script type="text/javascript" src="https://cdn.datatables.net/v/bs4/dt-1.11.3/datatables.min.js"></script>
+  <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/v/bs4/dt-1.11.3/datatables.min.css"/>
+
+  </head>
+
+{% macro number_comma_or_na(n) -%}
+{{ ("{:.1e}" if n > 1.1e11 else "{:,}").format(n) if n else "N/A" }}
+{%- endmacro %}
+
+{%- macro status_row(data) -%}
+  {# copy so we can pop properties #}
+  {%- set d = dict(data) -%}
+  {%- set num_id = d.pop("num_id") -%}
+  {%- set n = d.pop("n") -%}
+  {%- set status = d.pop("status") -%}
+    <tr>
+      <td class="pr-4" data-order="{{num_id}}">
+        {{ num_id }}
+      </td>
+      <td class="pr-4" data-order="{{n}}">
+        {{ n }}
+      </td>
+      <td class="pr-4" data-order="{{status}}">
+        {{ status }}
+      </td>
+      </td>
+    </tr>
+{%- endmacro -%}
+
+{% macro status_table(label, rows) -%}
+<table id="status" class="table table-sm table-hover">
+  <thead class="thead-light">
+    <tr>
+      <th scope="col">num_id</th>
+      <th scope="col">n</th>
+<!--      <th scope="col">n_expr</th>-->
+      <th scope="col">status</th>
+<!--      <th scope="col">t_level</th>-->
+    </tr>
+  </thead>
+  <tbody>
+  {%- for data in rows -%}
+    {{ status_row(data) }}
+  {%- endfor -%}
+  </tbody>
+</table>
+{%- endmacro %}
+
+<body>
+  <div id='main-col' class="container">
+    <h1 class="text-center">ECM DB</h1>
+    <br>
+    <div>
+      <div class="d-flex justify-content-center">
+        {{ status_table( "All", status ) }}
+      </div>
+    </div>
+  </div>
+</body>
+
+<script type="text/javascript">
+  $(document).ready(function () {
+    $('#status').DataTable({
+      "aoColumnDefs": [
+        { "bSortable": false, "aTargets": [] },
+        { "select": true, "aTargets": [] },
+      ],
+      searching: true,
+      ordering: true,
+      pageLength: 25,
+    });
+    $('.dataTables_length').addClass('bs-select');
+
+  });
+</script>
+</html>

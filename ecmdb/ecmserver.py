@@ -1,20 +1,21 @@
 import contextlib
-import datetime
 import logging
 import numbers
 import os
 import re
-import time
 
 from enum import Enum
 
 import gmpy2
 import sqlite3
 
+from flask import Flask, render_template, g
+
+
 class EcmServer:
     """ECM Server
 
-    Responsible for recording what curves have been run.
+    Responsible for recording what curves have been run, and serving the website.
     """
 
     SCHEMA_FILE = "schema.sql"
@@ -28,43 +29,58 @@ class EcmServer:
 
     def __init__(self, db_file="./ecm-server.db"):
         self._db_file = db_file
-        self._db = None
-
-        self.init_db()
+        self._app = self._init_webapp()
 
 
-    def init_db(self):
-        exists = os.path.isfile(self._db_file) and os.path.getsize(self._db_file) > 0
+    def run(self, *args, **kwargs):
+        return self._app.run(*args, **kwargs)
 
-        self._db = sqlite3.connect(self._db_file)
-        # Makes returns namedtuple like
-        self._db.row_factory = sqlite3.Row
+    # factory approach from https://flask.palletsprojects.com/en/3.0.x/patterns/appfactories/
+    def _init_webapp(self):
+        app = Flask(__name__, template_folder="../templates")
 
-        # Turn on foreign_key constraints
-        self._db.execute("PRAGMA foreign_keys = 1")
+        @app.route("/", methods=["GET"])
+        def main_page():
+            status = self.status()
+            self.add_number(300)
+            return render_template(
+                "index.html",
+                status=status,
+            )
 
-        if not exists:
-            schema_path = os.path.join(os.path.dirname(__file__), EcmServer.SCHEMA_FILE)
-            logging.warning(f"Creating db({self._db_file}) from {schema_path}")
-            with open(schema_path) as schema_f:
-                schema = schema_f.read()
-                with self.cursor() as cur:
-                    cur.executescript(schema)
+        return app
+
+    def _get_db(self):
+        # application context db connection https://flask.palletsprojects.com/en/1.1.x/patterns/sqlite3/
+        db = getattr(g, '_db', None)
+        if db is None:
+            exists = os.path.isfile(self._db_file) and os.path.getsize(self._db_file) > 0
+
+            g._db = sqlite3.connect(self._db_file)
+            # Makes returns namedtuple like
+            g._db.row_factory = sqlite3.Row
+
+            # Turn on foreign_key constraints
+            g._db.execute("PRAGMA foreign_keys = 1")
+
+            if not exists:
+                schema_path = os.path.join(os.path.dirname(__file__), EcmServer.SCHEMA_FILE)
+                logging.warning(f"Creating db({self._db_file}) from {schema_path}")
+                with open(schema_path) as schema_f:
+                    schema = schema_f.read()
+                    with self.cursor() as cur:
+                        cur.executescript(schema)
+        return g._db
 
 
-    def _get_cursor(self):
-        # TODO: closing cursor one day.
-        return self._db.cursor()
-
-
-    def cursor(self):
-        return contextlib.closing(self._get_cursor())
+    def _cursor(self):
+        return contextlib.closing(self._get_db().cursor())
 
 
     def find_number(self, n):
         """Find record for number if it's part of the database"""
         # TODO allow lookup by numid?
-        with self.cursor() as cur:
+        with self._cursor() as cur:
             cur.execute('SELECT * from numbers where n = ?', (n,))
             records = cur.fetchall()
 
@@ -89,11 +105,18 @@ class EcmServer:
 
         status = 2 if gmpy2.is_prime(n) else 5
 
-        with self.cursor() as cur:
+        with self._cursor() as cur:
             cur.execute('INSERT INTO numbers VALUES (null,?,?)', (n, status))
-        self._db.commit()
+        self._get_db().commit()
 
         return self.find_number(n)
+
+    def status(self):
+        with self._cursor() as cur:
+            # TODO add t-level or some level of ecm summary
+            cur.execute('SELECT numbers.* FROM numbers')
+            records = cur.fetchall()
+        return records
 
 
     def stats(self, expr):
@@ -121,3 +144,9 @@ class EcmServer:
         # https://stackoverflow.com/questions/2371436/evaluating-a-mathematical-expression-in-a-string
         return False
 
+
+
+if __name__ == '__main__':
+    server = EcmServer()
+    # TODO allow config of port and host via ini or argparse
+    server.run(host="0.0.0.0", port=8000, debug=True)
