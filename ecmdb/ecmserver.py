@@ -7,6 +7,7 @@ import re
 import time
 
 from enum import Enum
+import expression
 
 import gmpy2
 import sqlite3
@@ -80,6 +81,8 @@ class EcmServer:
 
         if EcmServer._is_number(expr):
             n = int(expr)
+        elif EcmServer._is_number_expr(expr):
+            n = expression.evaluate(expr)
         else:
             raise ValueError(f"Bad expr: {expr}")
 
@@ -117,7 +120,4 @@ class EcmServer:
 
 
     def _is_number_expr(expr):
-        # TODO
-        # https://stackoverflow.com/questions/2371436/evaluating-a-mathematical-expression-in-a-string
-        return False
-
+        return expression.can_parse(expr)
